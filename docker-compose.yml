@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: webgis-postgres
+    environment:
+      POSTGRES_DB: webgis
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "--auth-host=md5"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - webgis-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: webgis-backend
+    environment:
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: webgis
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DEBUG_TILES: "1"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    networks:
+      - webgis-network
+
+  frontend:
+    image: nginx:alpine
+    container_name: webgis-frontend
+    ports:
+      - "8081:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    networks:
+      - webgis-network
+
+volumes:
+  postgres-data:
+
+networks:
+  webgis-network:
+    driver: bridge

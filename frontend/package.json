@@ -1,0 +1,24 @@
+{
+  "name": "webgis-frontend",
+  "version": "1.0.0",
+  "description": "OpenLayers frontend for WebGIS",
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "npm run build && http-server -p 8080",
+    "start": "npm run build && http-server -p 8080"
+  },
+  "keywords": [
+    "openlayers",
+    "gis",
+    "maps"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ol": "^8.2.0"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "typescript": "^5.9.3"
+  }
+}

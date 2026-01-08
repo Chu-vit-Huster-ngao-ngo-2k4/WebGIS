@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# Logs
+npm-debug.log
+*.log
+
+# Environment variables
+.env
+
+# Build Outputs & Generated Code
+dist/
+build/
+frontend/js/
+
+# Caches
+cache/
+.eslintcache
+
+# IDE & System
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# Access keys / Identity
+*.key
+*.pem
+
+# GIS Data & Large Files
+postgres-data/
+data/*.pbf
+data/*.osm
+data/*.zip
+data/*.gz
+data/*.geojson
+# !data/buildings.geojson <- Too large (1GB), must ignore
+
+# Keep sample data if needed, but ignore massive ones. 
+# Assuming buildings.geojson is the sample one used in the app, we keep it. 
+# But usually geojson can be big. I'll ignore general large extensions but maybe exception for small config files.
+# Let's just block the known large binary formats for now.
+
+# Generated Tiles / Test Images
+*.mvt
+# *.png logic: Only ignore if they are tiles. If we have assets, we shouldn't.
+# Given the project state, safe to maybe exclude test_raster.png from version control if it's a test artifact.
+test_raster.png
+
