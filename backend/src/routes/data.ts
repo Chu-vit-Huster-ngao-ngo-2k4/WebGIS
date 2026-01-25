@@ -109,19 +109,25 @@ router.get('/search', async (req: Request, res: Response) => {
 
     const searchTerm = `%${q}%`;
     
-    // Search in points and polygons
+    // Search in points, polygons, AND charging stations
     const query = `
-      SELECT name, 'point' as type, ST_X(ST_Transform(way, 4326)) as lon, ST_Y(ST_Transform(way, 4326)) as lat 
+      SELECT name, address, 'charging_station' as type, lon, lat 
+      FROM charge_stations
+      WHERE name ILIKE $1 OR address ILIKE $1
+
+      UNION
+
+      SELECT name, NULL as address, 'point' as type, ST_X(ST_Transform(way, 4326)) as lon, ST_Y(ST_Transform(way, 4326)) as lat 
       FROM planet_osm_point 
       WHERE name ILIKE $1 
       
       UNION
       
-      SELECT name, 'polygon' as type, ST_X(ST_Centroid(ST_Transform(way, 4326))) as lon, ST_Y(ST_Centroid(ST_Transform(way, 4326))) as lat 
+      SELECT name, NULL as address, 'polygon' as type, ST_X(ST_Centroid(ST_Transform(way, 4326))) as lon, ST_Y(ST_Centroid(ST_Transform(way, 4326))) as lat 
       FROM planet_osm_polygon 
       WHERE name ILIKE $1 
       
-      LIMIT 10;
+      LIMIT 20;
     `;
 
     const result = await db.query(query, [searchTerm]);

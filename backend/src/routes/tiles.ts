@@ -1,17 +1,21 @@
 import { Router, Request, Response } from 'express';
-import * as path from 'path';
-import mapnik = require('mapnik');
+// import * as path from 'path';
+// import mapnik = require('mapnik');
+// @ts-ignore
 import SphericalMercator = require('@mapbox/sphericalmercator');
 
 const router = Router();
-const mercator = new (SphericalMercator as any)({ size: 256 });
+// const mercator = new (SphericalMercator as any)({ size: 256 });
 
+/*
 if ((mapnik as any).register_default_input_plugins) {
   (mapnik as any).register_default_input_plugins();
 }
+*/
 
 router.get('/raster/:z/:x/:y.png', async (req: Request, res: Response) => {
-  try {
+    res.status(503).send('Mapnik disabled');
+    /*
     const { z, x, y } = req.params;
     const zoom = parseInt(z, 10);
     const col = parseInt(x, 10);
@@ -33,15 +37,12 @@ router.get('/raster/:z/:x/:y.png', async (req: Request, res: Response) => {
         res.type('png');
         res.send(rendered.encodeSync('png'));
       });
-    });
-  } catch (error: any) {
-    console.error('Raster tile error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    */
 });
 
 router.get('/vector/:z/:x/:y.mvt', async (req: Request, res: Response) => {
-  try {
+    res.status(503).send('Mapnik disabled');
+    /*
     const { z, x, y } = req.params;
     const zoom = parseInt(z, 10);
     const col = parseInt(x, 10);
@@ -77,6 +78,7 @@ router.get('/vector/:z/:x/:y.mvt', async (req: Request, res: Response) => {
     console.error('Vector tile error:', error);
     res.status(500).json({ error: error.message });
   }
+  */
 });
 
 export default router;

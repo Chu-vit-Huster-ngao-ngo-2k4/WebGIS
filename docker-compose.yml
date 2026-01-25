@@ -30,6 +30,8 @@ services:
       DEBUG_TILES: "1"
     ports:
       - "3000:3000"
+    volumes:
+      - ./data:/data
     depends_on:
       - postgres
     networks:

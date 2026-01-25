@@ -10,12 +10,35 @@ const map = new ol.Map({
   })
 });
 
-// Base layer - OpenStreetMap
+// Base layer - OpenStreetMap (Standard)
 const osmLayer = new ol.layer.Tile({
   source: new ol.source.OSM(),
-  visible: true
+  visible: true,
+  zIndex: 0
 });
 map.addLayer(osmLayer);
+
+// CartoDB Positron (Cleaner, better for analysis overlays) - Optional
+const cartoLayer = new ol.layer.Tile({
+  source: new ol.source.XYZ({
+    url: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attributions: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  }),
+  visible: false, // Hidden by default
+  zIndex: 1 
+});
+map.addLayer(cartoLayer);
+
+// Google Earth Style - ESRI World Imagery (Satellite)
+const satelliteLayer = new ol.layer.Tile({
+  source: new ol.source.XYZ({
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attributions: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+  }),
+  visible: false,
+  zIndex: 1 // Same level as Carto, toggle will control visibility
+});
+map.addLayer(satelliteLayer);
 
 // Raster tile layer from Mapnik
 const rasterLayer = new ol.layer.Tile({
@@ -54,39 +77,370 @@ const featureLayer = new ol.layer.Vector({
 });
 map.addLayer(featureLayer);
 
-// Filter layer for specific amenities
+// Filter layer for specific amenities (Restored for compatibility)
 const filterSource = new ol.source.Vector();
 const filterLayer = new ol.layer.Vector({
   source: filterSource,
-  zIndex: 100, // Ensure it's on top
+  zIndex: 140, 
   style: (feature: any) => {
-    const type = feature.get('amenity') || feature.get('type');
-    let color = '#333';
-    let icon = '\uf041'; // Default map marker
-
-    // Match colors/icons from the HTML
-    if (type === 'school') { color = '#e67e22'; icon = '\uf549'; } // fa-school
-    else if (type === 'hospital') { color = '#e74c3c'; icon = '\uf0f8'; } // fa-hospital
-    else if (type === 'cafe') { color = '#795548'; icon = '\uf0f4'; } // fa-coffee
-    else if (type === 'bank') { color = '#27ae60'; icon = '\uf19c'; } // fa-university
-    else if (type === 'cinema') { color = '#9b59b6'; icon = '\uf008'; } // fa-film
-    else if (type === 'parking') { color = '#34495e'; icon = '\uf540'; } // fa-parking
-    else if (type === 'fuel') { color = '#2c3e50'; icon = '\uf52f'; } // fa-gas-pump
-    else if (type === 'pharmacy') { color = '#2ecc71'; icon = '\uf48e'; } // fa-prescription-bottle-alt
-    else { color = '#3498db'; icon = '\uf3c5'; } // Generic pin for others
-
+    // Basic style for filtered items
     return new ol.style.Style({
-      text: new ol.style.Text({
-        text: icon,
-        font: '900 20px "Font Awesome 6 Free"', // Updated for FA 6
-        fill: new ol.style.Fill({ color: color }),
-        stroke: new ol.style.Stroke({ color: '#fff', width: 3 }),
-        offsetY: -10
+      image: new ol.style.Circle({
+         radius: 6,
+         fill: new ol.style.Fill({color: '#e67e22'}),
+         stroke: new ol.style.Stroke({color: '#fff', width: 2})
       })
     });
   }
 });
 map.addLayer(filterLayer);
+
+// Charging Stations Layer
+const chargingStationsSource = new ol.source.Vector({
+  url: `${API_URL}/api/stations/geojson`,
+  format: new ol.format.GeoJSON({ featureProjection: 'EPSG:3857' })
+});
+
+// Auto-zoom to data when loaded (optional, but helpful for debugging)
+chargingStationsSource.once('change', function(e: any) {
+  if (chargingStationsSource.getState() === 'ready') {
+    const featureCount = chargingStationsSource.getFeatures().length;
+    console.log(`Loaded ${featureCount} charging stations.`);
+    
+    // Notify user
+    const countEl = document.getElementById('feature-count');
+    if (countEl) countEl.innerHTML = `<span style="color: green">Loaded ${featureCount} VinFast Stations</span>`;
+    
+    // Suggest zooming if far away (or auto zoom if desired - commented out for now to avoid jump)
+    if (featureCount > 0) {
+       map.getView().fit(chargingStationsSource.getExtent(), { 
+           padding: [50, 50, 50, 50],
+           maxZoom: 16,
+           duration: 1000 
+       });
+    }
+  }
+});
+
+// Cluster Source for better performance
+const clusterSource = new ol.source.Cluster({
+  distance: 30, // Distance in pixels to cluster points
+  minDistance: 20,
+  source: chargingStationsSource
+});
+
+// Helper to generate station style
+const createStationStyle = (feature: any) => {
+    const props = feature.getProperties();
+    const status = props.status;
+    const category = props.category || '';
+    const name = props.name || '';
+    
+    const isActive = status === '1' || status === 'Đang hoạt động';
+    let color = isActive ? '#27ae60' : '#95a5a6';
+
+    let labelText = '\uf0e7'; 
+    let font = '900 14px "Font Awesome 6 Free"';
+    let offsetY = 1;
+
+    const kwMatch = (name + ' ' + category).match(/(\d+)\s*[kK][wW]/);
+    
+    if (kwMatch) {
+      labelText = kwMatch[1]; 
+      font = 'bold 12px "Segoe UI", sans-serif'; 
+      offsetY = 1;
+      
+      const power = parseInt(labelText);
+      if (power >= 250) color = '#e74c3c'; 
+      else if (power >= 150) color = '#e67e22'; 
+      else if (power >= 60) color = '#2980b9'; 
+      else color = '#27ae60'; 
+    } else if (category.includes('Tủ đổi pin') || name.includes('Tủ đổi pin')) {
+       labelText = '\uf240'; 
+       font = '900 12px "Font Awesome 6 Free"';
+       color = '#8e44ad'; 
+    }
+
+    return new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 16, 
+        fill: new ol.style.Fill({ color: '#ffffff' }),
+        stroke: new ol.style.Stroke({ color: color, width: 3 })
+      }),
+      text: new ol.style.Text({
+        text: labelText,
+        font: font,
+        fill: new ol.style.Fill({ color: color }), 
+        stroke: new ol.style.Stroke({ color: '#fff', width: 2 }), 
+        offsetY: offsetY
+      })
+    });
+};
+
+const chargingStationsLayer = new ol.layer.Vector({
+  source: clusterSource,
+  zIndex: 150,
+  style: (feature: any) => {
+    const features = feature.get('features');
+    const size = features ? features.length : 1;
+
+    // --- CASE 1: CLUSTER > 5 ITEMS ---
+    if (size > 5) {
+      return new ol.style.Style({
+        image: new ol.style.Circle({
+          radius: 12 + Math.min(size, 10), 
+          stroke: new ol.style.Stroke({ color: '#fff', width: 2 }),
+          fill: new ol.style.Fill({ color: '#3398DB' })
+        }),
+        text: new ol.style.Text({
+          text: size.toString(),
+          fill: new ol.style.Fill({ color: '#fff' }),
+          font: 'bold 12px "Segoe UI", sans-serif'
+        })
+      });
+    }
+
+    // --- CASE 2: SMALL CLUSTER (<= 5) OR SINGLE ---
+    // If it's a cluster of 2-5 items, we want to show them INDIVIDUALLY visually
+    // even though they are technically in a cluster feature.
+    // We do this by returning an Array of styles, one for each sub-feature, 
+    // with geometry explicitly set to the sub-feature's position.
+    
+    if (features && features.length > 0) {
+        return features.map((f: any) => {
+            const style = createStationStyle(f);
+            style.setGeometry(f.getGeometry()); // Force render at original location
+            return style;
+        });
+    }
+
+    return createStationStyle(feature); // Fallback
+  }
+});
+map.addLayer(chargingStationsLayer);
+
+
+// -- SEARCH PANEL LOGIC --
+const openSearchBtn = document.getElementById('open-search-btn');
+const closeSearchBtn = document.getElementById('close-search-btn');
+const sidebarMainView = document.getElementById('sidebar-main-view');
+const sidebarSearchView = document.getElementById('sidebar-search-view');
+const sidebarSearchInput = document.getElementById('sidebar-search-input') as HTMLInputElement;
+
+if (openSearchBtn && sidebarMainView && sidebarSearchView) {
+    openSearchBtn.addEventListener('click', () => {
+        console.log('Open Search Clicked');
+        sidebarMainView.style.display = 'none';
+        sidebarSearchView.style.display = 'flex';
+        if (sidebarSearchInput) sidebarSearchInput.focus();
+    });
+} else {
+    console.error('Search elements missing:', { openSearchBtn, sidebarMainView, sidebarSearchView });
+}
+
+if (closeSearchBtn && sidebarMainView && sidebarSearchView) {
+    closeSearchBtn.addEventListener('click', () => {
+        console.log('Close Search Clicked');
+        sidebarSearchView.style.display = 'none';
+        sidebarMainView.style.display = 'flex'; // Restore as flex
+    });
+}
+
+// Logic Search function (migrated)
+const performSidebarSearch = async () => {
+   if (!sidebarSearchInput) return;
+   const query = sidebarSearchInput.value;
+   if (!query) return;
+   
+   const resultsContainer = document.getElementById('sidebar-search-results');
+   if (resultsContainer) resultsContainer.innerHTML = '<div style="padding:20px; text-align:center"><i class="fas fa-spinner fa-spin"></i> Searching...</div>';
+   
+   try {
+      const response = await fetch(`${API_URL}/api/data/search?q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      
+      if (resultsContainer) {
+          resultsContainer.innerHTML = '';
+          if (data.length === 0) {
+              resultsContainer.innerHTML = '<div style="padding:20px; text-align:center">No results found</div>';
+              return;
+          }
+          
+          data.forEach((item: any) => {
+              const div = document.createElement('div');
+              div.className = 'layer-item-google'; // Reuse style
+              div.style.flexDirection = 'column';
+              div.style.alignItems = 'flex-start';
+              div.innerHTML = `
+                  <div style="font-weight:bold; color:#db4437">${item.name || 'Unknown Place'}</div>
+                  <div style="font-size:12px; color:#666">${item.address || item.type}</div>
+              `;
+              div.onclick = () => {
+                // Zoom to feature
+                const coords = ol.proj.fromLonLat([item.lon, item.lat]);
+                map.getView().animate({ center: coords, zoom: 16 });
+                
+                // Show marker styling (simplified)
+                overlay.setPosition(coords);
+                content!.innerHTML = `<div style="font-weight:bold">${item.name}</div>`;
+              };
+              resultsContainer.appendChild(div);
+          });
+      }
+   } catch(e) {
+       console.error(e);
+       if (resultsContainer) resultsContainer.innerHTML = '<div style="color:red; padding:20px">Search failed</div>';
+   }
+};
+
+const searchGoBtn = document.getElementById('sidebar-search-go');
+if (searchGoBtn) {
+    searchGoBtn.addEventListener('click', performSidebarSearch);
+}
+if (sidebarSearchInput) {
+    sidebarSearchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') performSidebarSearch();
+    });
+}
+
+// -- LAYER FILTER LOGIC (Mô phỏng Ẩn/Hiện lớp con bằng Style) --
+// Ta không thực sự có layer con, mà chỉ filter feature trên 1 layer chính
+const checkboxes = document.querySelectorAll('.layer-checkbox');
+checkboxes.forEach(cb => {
+    cb.addEventListener('change', () => {
+        chargingStationsLayer.changed(); // Trigger re-render
+    });
+});
+
+// Update style function to respect filters
+const isFeatureVisible = (feature: any) => {
+    const props = feature.getProperties();
+    // Logic mapping props -> classification
+    // (Sao chép logic phân loại từ CreateStationStyle)
+    const name = props.name || '';
+    const category = props.category || '';
+    const kwMatch = (name + ' ' + category).match(/(\d+)\s*[kK][wW]/);
+    
+    let type = 'normal';
+    if (kwMatch) {
+         const power = parseInt(kwMatch[1]);
+         if (power >= 250) type = 'super_fast';
+         else if (power >= 180) type = 'fast_180';
+         else if (power >= 150) type = 'fast_150';
+         else if (power >= 60) type = 'fast_60';
+    } else if (category.includes('Tủ đổi pin') || name.includes('Tủ đổi pin')) {
+         type = 'battery';
+    }
+    
+    // Find checkbox for this type
+    const cb = document.querySelector(`.layer-checkbox[data-filter="${type}"]`) as HTMLInputElement;
+    return cb ? cb.checked : true; // Default true if no filter found
+};
+
+// Override layer style function wrapper
+const originalStyleFn = chargingStationsLayer.getStyle();
+// We need to set the style function on the layer AGAIN with the filter check
+chargingStationsLayer.setStyle((feature: any, resolution: any) => {
+    // 1. Check visibility first
+    // Note: For Clusters, we might need to check if ANY feature in cluster is visible...
+    // But for simplicity, let's just check individual features or assume cluster is visible if mostly true.
+    
+    // Actually, best way is to filter source or use a style that returns null.
+    
+    const features = feature.get('features');
+    if (features) {
+         // Cluster: Check if at least one sub-feature is visible? 
+         // Or simplistic: Just render cluster. 
+         // Real Filtering for Clusters requires re-creating the Cluster Source on filter change.
+         // Let's do simple visual HIDING for now.
+         
+         const visibleFeatures = features.filter(isFeatureVisible);
+         if (visibleFeatures.length === 0) return null; // Hide cluster if empty
+         
+         // If we wanted to be perfect, we'd update cluster size text. 
+         // But OL Cluster source is geometric, style just visual.
+         // Let's just proceed.
+    } else {
+        // Single feature
+        if (!isFeatureVisible(feature)) return null;
+    }
+
+    // Call original logic (which is defined in variable above or just recreate logic)
+    // Since originalStyleFn might be complex, let's just call the logic block we defined earlier.
+    // Wait, 'chargingStationsLayer' style was defined inline. We can't easily capture 'originalStyleFn' if it was anonymous.
+    // Let's just Paste the logic again or use the createStationStyle helper if available.
+    
+    // RE-USE LOGIC FROM PREVIOUS STEPS:
+    
+    if (features) {
+        const size = features.length;
+         // --- CASE 1: CLUSTER > 5 ITEMS ---
+        if (size > 5) {
+          return new ol.style.Style({
+            image: new ol.style.Circle({
+              radius: 12 + Math.min(size, 10), 
+              stroke: new ol.style.Stroke({ color: '#fff', width: 2 }),
+              fill: new ol.style.Fill({ color: '#3398DB' })
+            }),
+            text: new ol.style.Text({
+              text: size.toString(),
+              fill: new ol.style.Fill({ color: '#fff' }),
+              font: 'bold 12px "Segoe UI", sans-serif'
+            })
+          });
+        }
+        
+        // --- CASE 2: SMALL CLUSTER (<= 5) OR SINGLE ---
+        if (size > 0) {
+            return features.filter(isFeatureVisible).map((f: any) => {
+                const style = createStationStyle(f);
+                style.setGeometry(f.getGeometry()); 
+                return style;
+            });
+        }
+    }
+    
+    return null;
+});
+
+// Toggle controls
+document.getElementById('osm-layer')?.addEventListener('change', (e: any) => {
+  osmLayer.setVisible(e.target.checked);
+});
+document.getElementById('raster-layer')?.addEventListener('change', (e: any) => {
+  rasterLayer.setVisible(e.target.checked);
+});
+document.getElementById('vector-layer')?.addEventListener('change', (e: any) => {
+  vectorLayer.setVisible(e.target.checked);
+});
+document.getElementById('charging-stations-layer')?.addEventListener('change', (e: any) => {
+  chargingStationsLayer.setVisible(e.target.checked);
+});
+
+// Refresh button handler
+document.getElementById('refresh-stations-btn')?.addEventListener('click', async (e) => {
+  e.stopPropagation(); // Prevent layer toggle
+  const btn = e.currentTarget as HTMLElement;
+  const icon = btn.querySelector('i');
+  
+  if(icon) icon.classList.add('fa-spin');
+  
+  try {
+      const res = await fetch(`${API_URL}/api/stations/sync`, { method: 'POST' });
+      const json = await res.json();
+      alert(`Cập nhật thành công! ${json.message}`);
+      // Refresh layer
+      chargingStationsSource.clear();
+      chargingStationsSource.refresh();
+  } catch(err) {
+      alert('Lỗi cập nhật dữ liệu');
+      console.error(err);
+  } finally {
+      if(icon) icon.classList.remove('fa-spin');
+  }
+});
+
+// Vector layer for loaded features
 
 // Analysis layer (Buffer & Results)
 const analysisSource = new ol.source.Vector();
@@ -154,6 +508,90 @@ let isScoreToolActive = false;
 map.on('singleclick', async (evt: any) => {
   const coordinate = evt.coordinate;
   
+  // 0. Check feature click first (Charging Stations usually)
+  const clickedFeature = map.forEachFeatureAtPixel(evt.pixel, (feat: any) => feat);
+
+  if (clickedFeature) {
+    let featureToSend = clickedFeature;
+    const props = clickedFeature.getProperties();
+    
+    // Handling Cluster logic
+    if (props.features) {
+        const features = props.features;
+        // If cluster has MANY items (> 5), Zoom in
+        if (features.length > 5) {
+            const extent = ol.extent.createEmpty();
+            features.forEach((f: any) => ol.extent.extend(extent, f.getGeometry().getExtent()));
+            const view = map.getView();
+            if (view.getZoom() < 19) {
+                 view.fit(extent, { duration: 500, padding: [50, 50, 50, 50] });
+                 return; 
+            }
+            featureToSend = features[0];
+        } else {
+            // Cluster <= 5 items OR Single item
+            // Since we visually separated them in the style, the user clicked on a specific location.
+            // We need to find WHICH sub-feature is closest to the click coordinate.
+            if (features.length > 1) {
+                const clickCoord = evt.coordinate;
+                let closestFeature = features[0];
+                let minDist = Infinity;
+                
+                features.forEach((f: any) => {
+                    const geom = f.getGeometry();
+                    const closestPoint = geom.getClosestPoint(clickCoord);
+                    const dist = Math.sqrt(
+                        Math.pow(clickCoord[0] - closestPoint[0], 2) + 
+                        Math.pow(clickCoord[1] - closestPoint[1], 2)
+                    );
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closestFeature = f;
+                    }
+                });
+                featureToSend = closestFeature;
+            } else {
+                featureToSend = features[0];
+            }
+        }
+    }
+
+    const finalProps = featureToSend.getProperties();
+    
+    // Logic cho trạm sạc VinFast
+    if (finalProps.type === 'charging_station') {
+        const isWorking = finalProps.status === '1' || finalProps.status === 'Đang hoạt động';
+        
+        let contentHTML = `
+           <div class="popup-header" style="background: linear-gradient(to right, #2c3e50, #4ca1af); color: #fff; padding: 12px; border-radius: 8px 8px 0 0;">
+                <div style="font-weight: 700; font-size: 16px;">${finalProps.name}</div>
+                <div style="font-size: 12px; opacity: 0.9;"><i class="fas fa-charging-station"></i> Trạm sạc VinFast</div>
+           </div>
+           <div class="popup-body" style="padding: 15px;">
+                <div class="popup-item" style="margin-bottom: 8px;"><i class="fas fa-map-marker-alt" style="color: #e74c3c; width: 20px;"></i> ${finalProps.address}</div>
+                <div class="popup-item" style="margin-bottom: 8px;"><i class="fas fa-plug" style="color: #3498db; width: 20px;"></i> Loại: <strong>${finalProps.category}</strong></div>
+                <div class="popup-item" style="margin-bottom: 8px;">
+                     <i class="fas fa-power-off" style="color: ${isWorking ? '#2ecc71' : '#e74c3c'}; width: 20px;"></i> 
+                     Trạng thái: <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background: ${isWorking ? '#e8f8f5' : '#fdedec'}; color: ${isWorking ? '#27ae60' : '#c0392b'}; font-weight: 600;">${isWorking ? 'Đang hoạt động' : (finalProps.status || 'Chưa xác định')}</span>
+                </div>
+        `;
+        
+        if (finalProps.hotline) {
+            contentHTML += `<div class="popup-item" style="margin-bottom: 8px;"><i class="fas fa-headset" style="color: #f39c12; width: 20px;"></i> Hotline: <a href="tel:${finalProps.hotline}" style="color: #2980b9; text-decoration: none; font-weight: 600;">${finalProps.hotline}</a></div>`;
+        }
+        
+        if (finalProps.open_time) {
+            contentHTML += `<div class="popup-item"><i class="fas fa-clock" style="color: #9b59b6; width: 20px;"></i> Giờ mở cửa: ${finalProps.open_time} - ${finalProps.close_time || '...'}</div>`;
+        }
+        
+        contentHTML += `</div>`; // Close body
+        
+        content!.innerHTML = contentHTML;
+        overlay.setPosition(coordinate);
+        return; // Stop here, don't run score tool or others
+    }
+  }
+
   // -1. Check if Score Tool is active
   if (isScoreToolActive) {
     const lonLat = ol.proj.toLonLat(coordinate);
@@ -345,6 +783,34 @@ function initApp() {
   console.log('WebGIS App Initializing...');
 
   // Layer controls
+
+  // Base Map Switcher Logic (Radio Buttons)
+  const radioOsm = document.getElementById('radio-osm') as HTMLInputElement;
+  const radioSatellite = document.getElementById('radio-satellite') as HTMLInputElement;
+  const radioCarto = document.getElementById('radio-carto') as HTMLInputElement;
+
+  const updateBaseMap = () => {
+     // Default state
+     osmLayer.setVisible(true); // Always keep OSM as bottom base
+     satelliteLayer.setVisible(false);
+     cartoLayer.setVisible(false);
+
+     if (radioSatellite && radioSatellite.checked) {
+         satelliteLayer.setVisible(true);
+     } else if (radioCarto && radioCarto.checked) {
+         cartoLayer.setVisible(true);
+     }
+  };
+
+  if (radioOsm) radioOsm.addEventListener('change', updateBaseMap);
+  if (radioSatellite) radioSatellite.addEventListener('change', updateBaseMap);
+  if (radioCarto) radioCarto.addEventListener('change', updateBaseMap);
+
+  /* OLD TOGGLE REMOVED
+  const cartoToggle = document.getElementById('carto-layer-toggle') as HTMLInputElement;
+  ...
+  */
+
   const osmCheckbox = document.getElementById('osm-layer') as HTMLInputElement;
   if (osmCheckbox) {
     osmCheckbox.addEventListener('change', (e) => {
@@ -577,7 +1043,8 @@ function initApp() {
     });
   }
 
-  // Score Tool Logic
+  // Score Tool Logic - REMOVED
+  /*
   const scoreBtn = document.getElementById('score-btn');
   if (scoreBtn) {
     scoreBtn.addEventListener('click', () => {
@@ -608,27 +1075,17 @@ function initApp() {
       });
     }
   });
+  */
 
-  // Sidebar Toggle Logic
+  // Sidebar Toggle Logic REMOVED for Fixed Sidebar
+  /*
   const sidebar = document.getElementById('sidebar');
   const sidebarToggle = document.getElementById('sidebar-toggle');
   const sidebarClose = document.getElementById('sidebar-close');
+  
+  // Fixed Sidebar does not use toggle logic
+  */
 
-  console.log('Sidebar elements:', { sidebar, sidebarToggle, sidebarClose });
-
-  if (sidebar && sidebarToggle && sidebarClose) {
-    sidebarToggle.addEventListener('click', () => {
-      console.log('Opening sidebar');
-      sidebar.classList.add('active');
-    });
-
-    sidebarClose.addEventListener('click', () => {
-      console.log('Closing sidebar');
-      sidebar.classList.remove('active');
-    });
-  } else {
-    console.error('Sidebar elements missing', { sidebar, sidebarToggle, sidebarClose });
-  }
 }
 
 // Run init when DOM is ready
