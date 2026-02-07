@@ -5,6 +5,7 @@ import tilesRouter from './routes/tiles';
 import dataRouter from './routes/data';
 import analysisRouter from './routes/analysis';
 import stationsRouter, { syncChargingStations } from './routes/stations';
+import districtSafetyRouter from './routes/districtSafety';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -16,6 +17,7 @@ app.use('/tiles', tilesRouter);
 app.use('/api/data', dataRouter);
 app.use('/api/analysis', analysisRouter);
 app.use('/api/stations', stationsRouter); // Đăng ký route trạm sạc
+app.use('/api/district-safety', districtSafetyRouter); // Đăng ký route thống kê quận
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

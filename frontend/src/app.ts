@@ -1,5 +1,5 @@
 // Configuration
-const API_URL: string = 'http://localhost:3000';
+const API_URL: string = 'http://localhost:3005';
 
 // Initialize the map
 const map = new ol.Map({
@@ -9,6 +9,131 @@ const map = new ol.Map({
     zoom: 13,
   })
 });
+
+// --- HANOI DISTRICTS/COMMUNES LAYER ---
+const districtSafetySource = new ol.source.Vector();
+
+// Highlight Interaction Layer (Selected District)
+const selectedDistrictSource = new ol.source.Vector();
+const selectedDistrictLayer = new ol.layer.Vector({
+  source: selectedDistrictSource,
+  zIndex: 11, // Above district layer
+  style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: '#f1c40f', width: 3 }), // Yellow selection border
+    fill: new ol.style.Fill({ color: 'rgba(241, 196, 15, 0.2)' }) // Semi-transparent yellow fill
+  })
+});
+map.addLayer(selectedDistrictLayer);
+
+// Dimmer Layer (Dark background outside Hanoi)
+// We use a large extent polygon to cover the "world"
+const dimmerSource = new ol.source.Vector();
+const dimmerFeature = new ol.Feature({
+    geometry: new ol.geom.Polygon.fromExtent([-20037508.34, -20037508.34, 20037508.34, 20037508.34]) // Web Mercator full extent
+});
+dimmerSource.addFeature(dimmerFeature);
+
+const dimmerLayer = new ol.layer.Vector({
+    source: dimmerSource,
+    zIndex: 9, // Below districts (10) but above base maps
+    visible: true,
+    style: new ol.style.Style({
+        fill: new ol.style.Fill({ color: 'rgba(0, 0, 0, 0.5)' }) // 50% opacity black
+    })
+});
+map.addLayer(dimmerLayer);
+
+const districtSafetyLayer = new ol.layer.Vector({
+  source: districtSafetySource,
+  zIndex: 10, 
+  style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: '#74b9ff', width: 2 }), // Light Blue border
+    fill: new ol.style.Fill({ color: 'rgba(255, 255, 255, 0)' }) // Transparent fill
+  })
+});
+map.addLayer(districtSafetyLayer);
+
+// Dimmer Layer implementation using 'prerender' to clip
+// We want the dimmer to draw EVERYWHERE EXCEPT the districtSafetySource features.
+dimmerLayer.on('prerender', (evt: any) => {
+    const ctx = evt.context;
+    // Only clip if we have districts loaded
+    if (districtSafetySource.getFeatures().length === 0) return;
+
+    ctx.save();
+    ctx.beginPath();
+    
+    // Draw all district polygons to the path
+    // Note: This draws them in pixel coordinates.
+    // We need to transform coordinates. 
+    // This is complex and performance heavy for 126 polygons on every frame.
+    // Optimisation: Just draw the dimming rect.
+    
+    // Let's rely on a simpler visual: Focus on Hanoi borders.
+    // If we MUST dim the outside, we really need that inverted polygon.
+    
+    ctx.restore();
+});
+
+
+
+async function loadDistrictSafety() {
+  try {
+    console.log('Fetching boundary data...');
+    const res = await fetch(`${API_URL}/api/district-safety`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
+    const data = await res.json();
+    console.log(`Received ${data.length} boundary records`);
+    
+    districtSafetySource.clear();
+    
+    if (data.length === 0) {
+        console.warn('No boundary data returned from API');
+        alert('Cảnh báo: Không tải được dữ liệu ranh giới (0 bản ghi). Hãy kiểm tra lại backend.');
+        return;
+    }
+
+    data.forEach((d: any) => {
+      if (!d.geom) return;
+      const feature = new ol.format.GeoJSON().readFeature({
+        type: 'Feature',
+        geometry: d.geom,
+        properties: {
+          id: d.id,
+          ten_xa: d.ten_xa,
+          dan_so: d.dan_so,
+          total_stations: d.total_stations,
+          open_stations: d.open_stations,
+          maintenance_stations: d.maintenance_stations,
+          charging_stations: d.charging_stations,
+          battery_stations: d.battery_stations,
+          safety_score: d.safety_score
+        }
+      }, { featureProjection: 'EPSG:3857' });
+      districtSafetySource.addFeature(feature);
+    });
+    console.log('Added features to map source');
+    
+    // Zoom to extent if data loaded
+    if (districtSafetySource.getFeatures().length > 0) {
+        const extent = districtSafetySource.getExtent();
+        if (!ol.extent.isEmpty(extent)) {
+             map.getView().fit(extent, { padding: [50, 50, 50, 50], duration: 1000 });
+        }
+    }
+    
+  } catch (e: any) {
+    console.error('Failed to load boundaries:', e);
+    alert('Lỗi tải dữ liệu biên giới: ' + (e.message || String(e)));
+  }
+}
+
+// Gọi khi khởi động app
+loadDistrictSafety();
+
+// Old District Popup Handler removed in favor of Sidebar integration
+
 
 // Base layer - OpenStreetMap (Standard)
 const osmLayer = new ol.layer.Tile({
@@ -129,61 +254,74 @@ const clusterSource = new ol.source.Cluster({
   source: chargingStationsSource
 });
 
-// Helper to generate station style
-const createStationStyle = (feature: any) => {
+// Helper for Status Style
+const createStatusStyle = (feature: any) => {
     const props = feature.getProperties();
     const status = props.status;
-    const category = props.category || '';
-    const name = props.name || '';
+    const isActive = status === '1' || status === 'Đang hoạt động' || status === 'Hoạt động';
     
-    const isActive = status === '1' || status === 'Đang hoạt động';
-    let color = isActive ? '#27ae60' : '#95a5a6';
-
-    let labelText = '\uf0e7'; 
-    let font = '900 14px "Font Awesome 6 Free"';
-    let offsetY = 1;
-
-    const kwMatch = (name + ' ' + category).match(/(\d+)\s*[kK][wW]/);
-    
-    if (kwMatch) {
-      labelText = kwMatch[1]; 
-      font = 'bold 12px "Segoe UI", sans-serif'; 
-      offsetY = 1;
-      
-      const power = parseInt(labelText);
-      if (power >= 250) color = '#e74c3c'; 
-      else if (power >= 150) color = '#e67e22'; 
-      else if (power >= 60) color = '#2980b9'; 
-      else color = '#27ae60'; 
-    } else if (category.includes('Tủ đổi pin') || name.includes('Tủ đổi pin')) {
-       labelText = '\uf240'; 
-       font = '900 12px "Font Awesome 6 Free"';
-       color = '#8e44ad'; 
-    }
+    // Status Mode: Green vs Gray
+    const color = isActive ? '#27ae60' : '#95a5a6';
+    const icon = '\uf0e7'; // Bolt
 
     return new ol.style.Style({
       image: new ol.style.Circle({
-        radius: 16, 
-        fill: new ol.style.Fill({ color: '#ffffff' }),
-        stroke: new ol.style.Stroke({ color: color, width: 3 })
+        radius: 10,
+        fill: new ol.style.Fill({ color: color }),
+        stroke: new ol.style.Stroke({ color: '#fff', width: 2 })
       }),
       text: new ol.style.Text({
-        text: labelText,
-        font: font,
-        fill: new ol.style.Fill({ color: color }), 
-        stroke: new ol.style.Stroke({ color: '#fff', width: 2 }), 
-        offsetY: offsetY
+          text: icon,
+          font: '900 10px "Font Awesome 6 Free"',
+          fill: new ol.style.Fill({ color: '#fff' }),
+          offsetY: 0
       })
     });
 };
 
-const chargingStationsLayer = new ol.layer.Vector({
-  source: clusterSource,
-  zIndex: 150,
-  style: (feature: any) => {
+// Helper for Type Style
+const createTypeStyle = (feature: any) => {
+    const props = feature.getProperties();
+    const rawCategory = props.category || '';
+    const category = rawCategory.toLowerCase();
+    
+    let color = '#f1c40f'; // Default
+    let icon = '\uf128';
+
+    if (category.includes('ô tô') || category.includes('car') || category.includes('bus')) {
+        color = '#2980b9'; // Blue
+        icon = '\uf1b9'; // Car
+    } else if (category.includes('xe máy') || category.includes('bike') || category.includes('moto')) {
+        color = '#e67e22'; // Orange
+        icon = '\uf21c'; // Motorcycle
+    } else if (category.includes('pin') || category.includes('tủ') || category.includes('battery')) {
+        color = '#8e44ad'; // Purple
+        icon = '\uf0e7'; // Bolt
+    } else if (category.includes('hỗn hợp') || category.includes('mix')) {
+        color = '#16a085'; // Teal
+        icon = '\uf5fd'; // Layer Group
+    }
+
+    return new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 10,
+        fill: new ol.style.Fill({ color: color }),
+        stroke: new ol.style.Stroke({ color: '#fff', width: 2 })
+      }),
+      text: new ol.style.Text({
+          text: icon,
+          font: '900 10px "Font Awesome 6 Free"',
+          fill: new ol.style.Fill({ color: '#fff' }),
+          offsetY: 0
+      })
+    });
+};
+
+// Generic Cluster Style Generator
+const getLayerStyle = (feature: any, type: 'status' | 'type') => {
     const features = feature.get('features');
     const size = features ? features.length : 1;
-
+    
     // --- CASE 1: CLUSTER > 5 ITEMS ---
     if (size > 5) {
       return new ol.style.Style({
@@ -201,30 +339,150 @@ const chargingStationsLayer = new ol.layer.Vector({
     }
 
     // --- CASE 2: SMALL CLUSTER (<= 5) OR SINGLE ---
-    // If it's a cluster of 2-5 items, we want to show them INDIVIDUALLY visually
-    // even though they are technically in a cluster feature.
-    // We do this by returning an Array of styles, one for each sub-feature, 
-    // with geometry explicitly set to the sub-feature's position.
-    
     if (features && features.length > 0) {
         return features.map((f: any) => {
-            const style = createStationStyle(f);
-            style.setGeometry(f.getGeometry()); // Force render at original location
+            const style = type === 'status' ? createStatusStyle(f) : createTypeStyle(f);
+            style.setGeometry(f.getGeometry());
             return style;
         });
     }
 
-    return createStationStyle(feature); // Fallback
-  }
+    return type === 'status' ? createStatusStyle(feature) : createTypeStyle(feature);
+};
+
+
+// 1. Status Layer
+const statusLayer = new ol.layer.Vector({
+  source: clusterSource,
+  zIndex: 150,
+  visible: true, // Default ON
+  style: (feature: any) => getLayerStyle(feature, 'status')
 });
-map.addLayer(chargingStationsLayer);
 
+// 2. Type Layer
+const typeLayer = new ol.layer.Vector({
+  source: clusterSource,
+  zIndex: 150,
+  visible: false, // Default OFF
+  style: (feature: any) => getLayerStyle(feature, 'type')
+});
 
-// -- SEARCH PANEL LOGIC --
+map.addLayer(statusLayer);
+map.addLayer(typeLayer);
+
+// --- STYLE MODE LOGIC ---
+const modeStatus = document.getElementById('mode-status') as HTMLInputElement;
+const modeType = document.getElementById('mode-type') as HTMLInputElement;
+
+const updateStyleMode = () => {
+    if (modeStatus && modeStatus.checked) {
+        statusLayer.setVisible(true);
+        typeLayer.setVisible(false);
+    }
+    if (modeType && modeType.checked) {
+        statusLayer.setVisible(false);
+        typeLayer.setVisible(true);
+        
+        // --- DEBUGGING DATA FROM BACKEND ---
+        console.group("🔍 DEBUG: Data Check for Type Mode");
+        const features = chargingStationsSource.getFeatures();
+        
+        if (features.length === 0) {
+            console.warn("⚠️ No features loaded in chargingStationsSource.");
+        } else {
+            console.log(`✅ Loaded ${features.length} stations.`);
+            
+            // Count categories to see what data we actually have
+            const categoryCounts: {[key: string]: number} = {};
+            const sampleFeatures: any[] = [];
+            
+            features.forEach((f: any, index: number) => {
+                const props = f.getProperties();
+                const cat = props.category || 'UNDEFINED';
+                categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+                
+                if (sampleFeatures.length < 5) sampleFeatures.push({ id: index, category: cat, status: props.status });
+            });
+            
+            console.log("📊 Category Distribution:", categoryCounts);
+            console.log("📝 First 5 Samples:", sampleFeatures);
+            console.log("ℹ️ If categories are 'UNDEFINED', check your database or backend query.");
+        }
+        console.groupEnd();
+    }
+};
+
+if (modeStatus) modeStatus.addEventListener('change', updateStyleMode);
+if (modeType) modeType.addEventListener('change', updateStyleMode);
+
+// --- GLOBAL LAYER TOGGLES ---
+const toggleStationsCheckbox = document.getElementById('toggle-stations') as HTMLInputElement;
+const toggleDistrictsCheckbox = document.getElementById('toggle-districts') as HTMLInputElement;
+
+if (toggleStationsCheckbox) {
+    toggleStationsCheckbox.addEventListener('change', () => {
+        // Toggle both potential station layers
+        const isVisible = toggleStationsCheckbox.checked;
+        if (modeStatus && modeStatus.checked) statusLayer.setVisible(isVisible);
+        else statusLayer.setVisible(false); // If mode not active, keep hidden. Logic below handles actual active layer.
+
+        if (modeType && modeType.checked) typeLayer.setVisible(isVisible);
+        else typeLayer.setVisible(false);
+
+        // Update the updateStyleMode function to respect this master toggle
+        updateStyleMode(); 
+    });
+}
+
+if (toggleDistrictsCheckbox) {
+    toggleDistrictsCheckbox.addEventListener('change', () => {
+         const isChecked = toggleDistrictsCheckbox.checked;
+         districtSafetyLayer.setVisible(isChecked);
+         selectedDistrictLayer.setVisible(isChecked); // Hide selection if layer is hidden
+         if (!isChecked) {
+            selectedDistrictSource.clear(); // Clear selection when hiding
+            // Also hide dimmer if we decide to link them
+         }
+    });
+}
+
+// Override updateStyleMode to include visibility check
+const _originalUpdateStyleMode = updateStyleMode; // Keep reference if needed, but we redefine simple logic below
+const updateStyleModeEnhanced = () => {
+    const isStationsEnabled = toggleStationsCheckbox ? toggleStationsCheckbox.checked : true;
+    
+    if (modeStatus && modeStatus.checked) {
+        statusLayer.setVisible(isStationsEnabled);
+        typeLayer.setVisible(false);
+    }
+    if (modeType && modeType.checked) {
+        statusLayer.setVisible(false);
+        typeLayer.setVisible(isStationsEnabled);
+    }
+}
+
+// --- SELECTION LOGIC FOR DISTRICTS ---
+const selectDistrict = (feature: any) => {
+    if (!feature) {
+        selectedDistrictSource.clear();
+        return;
+    }
+    
+    selectedDistrictSource.clear();
+    // Clone the feature to the selection layer so we can style it independently
+    const selectedFeature = feature.clone();
+    selectedDistrictSource.addFeature(selectedFeature);
+};
+
+// -- SEARCH & SIDEBAR LOGIC (Moved Up for Scope Accessibility) --
 const openSearchBtn = document.getElementById('open-search-btn');
 const closeSearchBtn = document.getElementById('close-search-btn');
 const sidebarMainView = document.getElementById('sidebar-main-view');
 const sidebarSearchView = document.getElementById('sidebar-search-view');
+const sidebarDistrictView = document.getElementById('sidebar-district-view');
+const sidebarRight = document.getElementById('sidebar-right'); // NEW: Right Sidebar Container
+const closeDistrictBtn = document.getElementById('close-district-btn');
+const districtInfoContent = document.getElementById('district-info-content');
 const sidebarSearchInput = document.getElementById('sidebar-search-input') as HTMLInputElement;
 
 if (openSearchBtn && sidebarMainView && sidebarSearchView) {
@@ -232,6 +490,10 @@ if (openSearchBtn && sidebarMainView && sidebarSearchView) {
         console.log('Open Search Clicked');
         sidebarMainView.style.display = 'none';
         sidebarSearchView.style.display = 'flex';
+        // We don't need to force close the right sidebar, as it doesn't overlap.
+        // But if we wanted to enforce focus, we could:
+        // if(sidebarRight) sidebarRight.style.display = 'none'; 
+        
         if (sidebarSearchInput) sidebarSearchInput.focus();
     });
 } else {
@@ -245,6 +507,167 @@ if (closeSearchBtn && sidebarMainView && sidebarSearchView) {
         sidebarMainView.style.display = 'flex'; // Restore as flex
     });
 }
+
+// Updated Close Logic for Right Sidebar
+if (closeDistrictBtn && sidebarDistrictView) {
+    closeDistrictBtn.addEventListener('click', () => {
+        // Hide the Right Sidebar Container
+        if (sidebarRight) sidebarRight.style.display = 'none';
+        
+        // No longer need to restore Sidebar Left (sidebarMainView) because we don't hide it anymore!
+        
+        selectedDistrictSource.clear();
+    });
+}
+
+// Update Single Click Logic to handle District Selection
+map.on('singleclick', (evt: any) => {
+  // 1. Check Stations first (Higher Priority)
+  const stationFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, {
+      layerFilter: (l: any) => l === statusLayer || l === typeLayer
+  });
+
+  if (stationFeature) {
+      // Logic for Station Popup (handled elsewhere in existing code, we ensure we don't block it)
+      // Just return here to let existing handler pick it up, OR ensure existing handler stops propogation
+      // The existing handler is async and registered separately.
+      // We should ideally merge them, but for now, let's just clear district selection if a station is clicked?
+      // No, user might want to see context.
+      return; 
+  }
+
+  // 2. Check Districts
+  const districtFeature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f, {
+      layerFilter: (l: any) => l === districtSafetyLayer
+  });
+
+  if (districtFeature) {
+      // Select it
+      selectDistrict(districtFeature);
+      
+      // AUTO ZOOM LOGIC
+      const geometry = districtFeature.getGeometry();
+      if (geometry) {
+          const isMobile = window.innerWidth <= 768;
+          // Calculate padding to ensure popup doesn't cover feature
+          // Right Sidebar Width is ~350px. Mobile bottom is ~40%.
+          const padding = isMobile 
+              ? [50, 50, (window.innerHeight * 0.4) + 50, 50] 
+              : [50, 400, 50, 50]; // 400px right padding gives space for sidebar + gap
+
+          map.getView().fit(geometry, {
+              padding: padding,
+              duration: 1000, // Smooth execution
+              maxZoom: 15.5 // Limit zoom level so it's not too close for small areas
+          });
+      }
+
+      const props = districtFeature.getProperties();
+      console.log("DEBUG: Clicked District Props:", props); // Log properties to console for debugging
+      
+      // Open Sidebar View (RIGHT SIDE)
+      if (districtInfoContent && sidebarDistrictView && sidebarRight) {
+          console.log("DEBUG: Opening Right Sidebar for", props.ten_xa);
+          // Do NOT hide Left Sidebar anymore
+          // sidebarMainView.style.display = 'none'; 
+          // sidebarSearchView.style.display = 'none';
+          
+          sidebarRight.style.display = 'block'; // Show the container
+          sidebarDistrictView.style.display = 'flex'; // Ensure content flex
+          
+          districtInfoContent.innerHTML = `
+            <div style="padding: 25px;"> 
+                <div style="padding-bottom: 15px; border-bottom: 1px solid #eee;">
+                    <h3 style="color: #c0392b; margin-top: 0; margin-bottom: 5px; font-size: 22px;">${props.ten_xa}</h3>
+                    <div style="color: #7f8c8d; font-size: 0.95em;">
+                        <i class="fas fa-users" style="width: 20px;"></i> Dân số: <b>${props.dan_so ? props.dan_so.toLocaleString() : 'N/A'}</b>
+                    </div>
+                </div>
+            
+                <div style="margin-top: 20px;">
+                <h4 style="margin-bottom: 15px; color: #2c3e50; border-left: 3px solid #c0392b; padding-left: 10px;">Thống kê Trạm sạc</h4>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center; grid-column: span 2;">
+                        <div style="font-size: 32px; font-weight: bold; color: #2c3e50;">${props.total_stations}</div>
+                        <div style="font-size: 12px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 1px;">Tổng số trạm</div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                   <h5 style="margin: 0 0 10px 0; color: #34495e; font-size: 14px; border-bottom: 1px dashed #ddd; padding-bottom: 5px;">Phân loại Trạm</h5>
+                   <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                      <span style="color: #666"><i class="fas fa-charging-station" style="color:#2980b9"></i> Trạm sạc xe:</span>
+                      <span style="font-weight: bold; color: #2c3e50">${props.charging_stations !== undefined ? props.charging_stations : 'Loading...'}</span>
+                   </div>
+                   <div style="display: flex; justify-content: space-between;">
+                      <span style="color: #666"><i class="fas fa-battery-full" style="color:#f39c12"></i> Tủ đổi pin:</span>
+                      <span style="font-weight: bold; color: #2c3e50">${props.battery_stations !== undefined ? props.battery_stations : 'Loading...'}</span>
+                   </div>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                   <h5 style="margin: 0 0 10px 0; color: #34495e; font-size: 14px; border-bottom: 1px dashed #ddd; padding-bottom: 5px;">Trạng thái hoạt động</h5>
+                   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                     <div style="background: #eafaf1; padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 18px; font-weight: bold; color: #27ae60;">${props.open_stations}</div>
+                        <div style="font-size: 10px; color: #27ae60; font-weight: 600;">HOẠT ĐỘNG</div>
+                    </div>
+                    
+                     <div style="background: #fef5e7; padding: 10px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 18px; font-weight: bold; color: #e67e22;">${props.maintenance_stations}</div>
+                        <div style="font-size: 10px; color: #d35400; font-weight: 600;">BẢO TRÌ</div>
+                    </div>
+                   </div>
+                </div>
+                
+                <div style="background: #fff; padding: 10px; border: 1px solid #eee; border-radius: 4px; font-size: 13px; line-height: 1.6; color: #555;">
+                    <i class="fas fa-info-circle" style="color: #3498db;"></i> 
+                    Khu vực <b>${props.ten_xa}</b> hiện có <b>${props.total_stations}</b> trạm sạc VinFast.
+                    ${props.total_stations > 0 ? 'Hạ tầng sạc tại đây ' + (props.total_stations > 5 ? 'được đầu tư mạnh.' : 'đang ở mức cơ bản.') : 'Chưa có trạm sạc tại đây.'}
+                </div>
+            </div>
+          `;
+      }
+  } else {
+      // Clicked on empty space (map background)
+      selectDistrict(null);
+      if (sidebarDistrictView && sidebarMainView) {
+          sidebarDistrictView.style.display = 'none';
+          sidebarMainView.style.display = 'flex';
+      }
+  }
+});
+
+// Re-bind listeners to new function
+if (modeStatus) {
+    modeStatus.removeEventListener('change', updateStyleMode); // Remove old ref event
+    modeStatus.addEventListener('change', updateStyleModeEnhanced);
+}
+if (modeType) {
+    modeType.removeEventListener('change', updateStyleMode);
+    modeType.addEventListener('change', updateStyleModeEnhanced);
+}
+// Also update the station checkbox listener to call this new function
+if (toggleStationsCheckbox) {
+    // Clear previous listener to avoid double call (though simple override is cleaner code structure in future)
+     toggleStationsCheckbox.onchange = updateStyleModeEnhanced;
+}
+
+
+// --- CLUSTER TOGGLE LOGIC ---
+const clusterCheckbox = document.getElementById('toggle-cluster') as HTMLInputElement;
+if (clusterCheckbox) {
+    clusterCheckbox.addEventListener('change', () => {
+        const isClusterEnabled = clusterCheckbox.checked;
+        const source = isClusterEnabled ? clusterSource : chargingStationsSource;
+        statusLayer.setSource(source);
+        typeLayer.setSource(source);
+    });
+}
+
+
+
 
 // Logic Search function (migrated)
 const performSidebarSearch = async () => {
@@ -308,137 +731,150 @@ if (sidebarSearchInput) {
 const checkboxes = document.querySelectorAll('.layer-checkbox');
 checkboxes.forEach(cb => {
     cb.addEventListener('change', () => {
-        chargingStationsLayer.changed(); // Trigger re-render
+        statusLayer.changed(); // Trigger re-render
+        typeLayer.changed();   // Trigger re-render
     });
 });
 
 // Update style function to respect filters
 const isFeatureVisible = (feature: any) => {
     const props = feature.getProperties();
-    // Logic mapping props -> classification
-    // (Sao chép logic phân loại từ CreateStationStyle)
-    const name = props.name || '';
-    const category = props.category || '';
-    const kwMatch = (name + ' ' + category).match(/(\d+)\s*[kK][wW]/);
+    const status = props.status;
     
-    let type = 'normal';
-    if (kwMatch) {
-         const power = parseInt(kwMatch[1]);
-         if (power >= 250) type = 'super_fast';
-         else if (power >= 180) type = 'fast_180';
-         else if (power >= 150) type = 'fast_150';
-         else if (power >= 60) type = 'fast_60';
-    } else if (category.includes('Tủ đổi pin') || name.includes('Tủ đổi pin')) {
-         type = 'battery';
-    }
+    // Check status based on both numeric code and text description
+    // Status 1 = Active. VinFast Status string = "Đang hoạt động" or "Hoạt động" or "active"
+    const isActive = status === '1' || 
+                     status === 'Đang hoạt động' || 
+                     status === 'Hoạt động' ||
+                     (typeof status === 'string' && status.toLowerCase() === 'active');
+    
+    // Determine type for filter
+    const filterType = isActive ? 'active' : 'inactive';
     
     // Find checkbox for this type
-    const cb = document.querySelector(`.layer-checkbox[data-filter="${type}"]`) as HTMLInputElement;
+    const cb = document.querySelector(`.layer-checkbox[data-filter="${filterType}"]`) as HTMLInputElement;
     return cb ? cb.checked : true; // Default true if no filter found
 };
 
-// Override layer style function wrapper
-const originalStyleFn = chargingStationsLayer.getStyle();
-// We need to set the style function on the layer AGAIN with the filter check
-chargingStationsLayer.setStyle((feature: any, resolution: any) => {
-    // 1. Check visibility first
-    // Note: For Clusters, we might need to check if ANY feature in cluster is visible...
-    // But for simplicity, let's just check individual features or assume cluster is visible if mostly true.
+// Generic Filtered Style Wrapper
+const getFilteredStyle = (feature: any, resolution: any, type: 'status' | 'type') => {
+    const features = feature.get('features'); // For clusters
     
-    // Actually, best way is to filter source or use a style that returns null.
-    
-    const features = feature.get('features');
     if (features) {
-         // Cluster: Check if at least one sub-feature is visible? 
-         // Or simplistic: Just render cluster. 
-         // Real Filtering for Clusters requires re-creating the Cluster Source on filter change.
-         // Let's do simple visual HIDING for now.
+         // --- CLUSTER LOGIC ---
+         const visibleFeatures = features.filter((f: any) => isFeatureVisible(f));
          
-         const visibleFeatures = features.filter(isFeatureVisible);
-         if (visibleFeatures.length === 0) return null; // Hide cluster if empty
+         if (visibleFeatures.length === 0) {
+             return null; // Hide entire cluster if all sub-features are hidden
+         }
          
-         // If we wanted to be perfect, we'd update cluster size text. 
-         // But OL Cluster source is geometric, style just visual.
-         // Let's just proceed.
+         const size = features.length;
+         if (size > 5) {
+             // Reuse cluster bubble style
+             return new ol.style.Style({
+                image: new ol.style.Circle({
+                  radius: 12 + Math.min(size, 10), 
+                  stroke: new ol.style.Stroke({ color: '#fff', width: 2 }),
+                  fill: new ol.style.Fill({ color: '#3398DB' })
+                }),
+                text: new ol.style.Text({
+                  text: size.toString(),
+                  fill: new ol.style.Fill({ color: '#fff' }),
+                  font: 'bold 12px "Segoe UI", sans-serif'
+                })
+             });
+         }
+         
+         // Small cluster -> Map to individual styles
+         return features.map((f: any) => {
+             if (!isFeatureVisible(f)) return new ol.style.Style({});
+             const style = type === 'status' ? createStatusStyle(f) : createTypeStyle(f);
+             style.setGeometry(f.getGeometry());
+             return style;
+         });
     } else {
-        // Single feature
+        // --- SINGLE FEATURE LOGIC ---
         if (!isFeatureVisible(feature)) return null;
+        return type === 'status' ? createStatusStyle(feature) : createTypeStyle(feature);
     }
+};
 
-    // Call original logic (which is defined in variable above or just recreate logic)
-    // Since originalStyleFn might be complex, let's just call the logic block we defined earlier.
-    // Wait, 'chargingStationsLayer' style was defined inline. We can't easily capture 'originalStyleFn' if it was anonymous.
-    // Let's just Paste the logic again or use the createStationStyle helper if available.
-    
-    // RE-USE LOGIC FROM PREVIOUS STEPS:
-    
-    if (features) {
-        const size = features.length;
-         // --- CASE 1: CLUSTER > 5 ITEMS ---
-        if (size > 5) {
-          return new ol.style.Style({
-            image: new ol.style.Circle({
-              radius: 12 + Math.min(size, 10), 
-              stroke: new ol.style.Stroke({ color: '#fff', width: 2 }),
-              fill: new ol.style.Fill({ color: '#3398DB' })
-            }),
-            text: new ol.style.Text({
-              text: size.toString(),
-              fill: new ol.style.Fill({ color: '#fff' }),
-              font: 'bold 12px "Segoe UI", sans-serif'
-            })
-          });
-        }
+// Apply filtered style logic
+statusLayer.setStyle((f: any, r: any) => getFilteredStyle(f, r, 'status'));
+typeLayer.setStyle((f: any, r: any) => getFilteredStyle(f, r, 'type'));
+
+// Basemap Switcher Logic
+const setBasemap = (type: string) => {
+    osmLayer.setVisible(type === 'osm');
+    satelliteLayer.setVisible(type === 'satellite');
+    cartoLayer.setVisible(type === 'carto');
+};
+
+document.getElementById('radio-osm')?.addEventListener('change', () => setBasemap('osm'));
+document.getElementById('radio-satellite')?.addEventListener('change', () => setBasemap('satellite'));
+document.getElementById('radio-carto')?.addEventListener('change', () => setBasemap('carto'));
+
+// Layer Toggles
+document.getElementById('check-all')?.addEventListener('change', (e: any) => {
+    // Toggle the visible ONE
+    if (modeStatus && modeStatus.checked) statusLayer.setVisible(e.target.checked);
+    if (modeType && modeType.checked) typeLayer.setVisible(e.target.checked);
+});
+
+// Unified Refresh button handler
+const updateLastUpdatedInfo = async () => {
+    try {
+        const res = await fetch(`${API_URL}/api/stations/info`);
+        const data = await res.json();
         
-        // --- CASE 2: SMALL CLUSTER (<= 5) OR SINGLE ---
-        if (size > 0) {
-            return features.filter(isFeatureVisible).map((f: any) => {
-                const style = createStationStyle(f);
-                style.setGeometry(f.getGeometry()); 
-                return style;
+        const lastUpdatedEl = document.getElementById('last-updated');
+        if (lastUpdatedEl && data.last_updated) {
+            const date = new Date(data.last_updated);
+            const formatted = date.toLocaleString('vi-VN', { 
+                hour: '2-digit', minute: '2-digit', 
+                day: '2-digit', month: '2-digit', year: 'numeric' 
             });
+            lastUpdatedEl.innerText = `Cập nhật: ${formatted}`;
         }
+    } catch (e) {
+        console.error('Failed to fetch stations info:', e);
     }
-    
-    return null;
-});
+};
 
-// Toggle controls
-document.getElementById('osm-layer')?.addEventListener('change', (e: any) => {
-  osmLayer.setVisible(e.target.checked);
-});
-document.getElementById('raster-layer')?.addEventListener('change', (e: any) => {
-  rasterLayer.setVisible(e.target.checked);
-});
-document.getElementById('vector-layer')?.addEventListener('change', (e: any) => {
-  vectorLayer.setVisible(e.target.checked);
-});
-document.getElementById('charging-stations-layer')?.addEventListener('change', (e: any) => {
-  chargingStationsLayer.setVisible(e.target.checked);
-});
-
-// Refresh button handler
-document.getElementById('refresh-stations-btn')?.addEventListener('click', async (e) => {
-  e.stopPropagation(); // Prevent layer toggle
+const handleRefresh = async (e: Event) => {
+  e.stopPropagation();
   const btn = e.currentTarget as HTMLElement;
   const icon = btn.querySelector('i');
   
   if(icon) icon.classList.add('fa-spin');
   
   try {
+      // Notify user process started
+      console.log('Starting sync...');
+      
       const res = await fetch(`${API_URL}/api/stations/sync`, { method: 'POST' });
       const json = await res.json();
-      alert(`Cập nhật thành công! ${json.message}`);
-      // Refresh layer
-      chargingStationsSource.clear();
-      chargingStationsSource.refresh();
+      
+      if (res.ok) {
+          alert(`Cập nhật thành công!\nTổng: ${json.stats?.total || 0}\nMới: ${json.stats?.new || 0}\nCập nhật: ${json.stats?.updated || 0}`);
+          // Refresh layer
+          chargingStationsSource.clear();
+          chargingStationsSource.refresh();
+          // Update info text
+          updateLastUpdatedInfo();
+      } else {
+          throw new Error(json.error || 'Server returned error');
+      }
   } catch(err) {
-      alert('Lỗi cập nhật dữ liệu');
+      alert('Lỗi cập nhật dữ liệu. Vui lòng kiểm tra Server console.');
       console.error(err);
   } finally {
       if(icon) icon.classList.remove('fa-spin');
   }
-});
+};
+
+document.getElementById('refresh-stations-btn')?.addEventListener('click', handleRefresh);
+document.getElementById('refresh-data-btn')?.addEventListener('click', handleRefresh);
 
 // Vector layer for loaded features
 
@@ -728,10 +1164,15 @@ map.on('singleclick', async (evt: any) => {
   }
 
   // 1. Check for client-side features (Vector Tiles or loaded GeoJSON)
-  const feature = map.forEachFeatureAtPixel(evt.pixel, (f: any) => f);
+  const hit = map.forEachFeatureAtPixel(evt.pixel, (f: any, l: any) => ({feature: f, layer: l}));
   
-  if (feature) {
-    const properties = feature.getProperties();
+  if (hit && hit.feature) {
+    // IGNORE Districts (Handled by Sidebar) and other UI layers to prevent double popup
+    if (hit.layer === districtSafetyLayer || hit.layer === selectedDistrictLayer || hit.layer === dimmerLayer) {
+        return;
+    }
+
+    const properties = hit.feature.getProperties();
     let html = `<div class="popup-row"><span class="popup-label">Source:</span> Vector Layer</div>`;
     
     // Filter out geometry and internal properties
@@ -781,6 +1222,9 @@ map.on('singleclick', async (evt: any) => {
 // Initialize application logic
 function initApp() {
   console.log('WebGIS App Initializing...');
+  
+  // Update info on load
+  updateLastUpdatedInfo();
 
   // Layer controls
 
@@ -805,6 +1249,16 @@ function initApp() {
   if (radioOsm) radioOsm.addEventListener('change', updateBaseMap);
   if (radioSatellite) radioSatellite.addEventListener('change', updateBaseMap);
   if (radioCarto) radioCarto.addEventListener('change', updateBaseMap);
+
+  // Style Mode Switcher
+  // (Moved logic to global scope earlier, but cleaning up this init function duplicate)
+  /* 
+     Logic is now handled by: 
+     const updateStyleMode = () => { ... }
+     attached directly to the elements globally.
+     We can remove this redundant block or keep it empty.
+  */
+
 
   /* OLD TOGGLE REMOVED
   const cartoToggle = document.getElementById('carto-layer-toggle') as HTMLInputElement;

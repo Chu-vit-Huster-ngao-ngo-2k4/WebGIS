@@ -58,7 +58,16 @@ const fetchVinFastData = async (forceUpdate: boolean = false): Promise<any[]> =>
             console.log('Fetch thành công từ Playwright, đang parse JSON...');
             try {
                 const data = JSON.parse(content);
-                return Array.isArray(data) ? data : (data.data || []);
+                const list = Array.isArray(data) ? data : (data.data || []);
+                
+                // DEBUG: Log categories found
+                const cats = new Set();
+                list.forEach((i: any) => cats.add(i.category_name || i.category || 'undefined'));
+                console.log("--- FOUND CATEGORIES IN SYNC ---");
+                console.log([...cats]);
+                console.log("--------------------------------");
+
+                return list;
             } catch (jsonErr) {
                 // Có thể là HTML error page
                 console.warn('Nội dung nhận được không phải JSON hợp lệ:', content.substring(0, 100));
@@ -179,9 +188,27 @@ router.post('/sync', async (req: Request, res: Response) => {
     }
 });
 
+// API: Lấy thông tin metadata (số lượng, thời gian update)
+router.get('/info', async (req: Request, res: Response) => {
+    try {
+        const query = `
+            SELECT 
+                COUNT(*) as count, 
+                MAX(last_updated) as last_updated 
+            FROM charge_stations
+        `;
+        const result = await db.query(query);
+        res.json(result.rows[0]);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 2. API: Lấy danh sách trạm sạc để hiển thị lên bản đồ (GeoJSON)
 router.get('/geojson', async (req: Request, res: Response) => {
     try {
+        res.setHeader('Cache-Control', 'no-store'); // Ensure fresh data on reload
+        
         // Filter for Vietnam Bounding Box (approx)
         // Lon: 102 - 110, Lat: 8 - 24
         const query = `

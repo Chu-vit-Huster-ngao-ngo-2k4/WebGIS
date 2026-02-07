@@ -6,14 +6,14 @@
   <title>WebGIS Pro</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="css/style.css?v=10">
+  <link rel="stylesheet" href="css/style.css?v=11">
 </head>
 <body>
   <div id="app">
     <!-- Map Container -->
     <div id="map"></div>
 
-    <!-- Google My Maps Style Sidebar -->
+    <!-- Google My Maps Style Sidebar (Left) -->
     <div id="sidebar" class="sidebar google-style-sidebar">
       
       <!-- VIEW 1: Main Info & Layers -->
@@ -36,7 +36,43 @@
           </div>
         </div>
         
-        <div class="sidebar-content google-style-content">
+          <!-- ADDED: Color Mode Selection -->
+          <div style="padding: 10px 20px; border-bottom: 1px solid #f0f0f0;">
+             <div class="section-title-simple">Chế độ hiển thị màu</div>
+             <div style="display: flex; gap: 15px;">
+                 <label class="radio-item">
+                     <input type="radio" name="style-mode" id="mode-status" checked> 
+                     <span>Theo trạng thái</span>
+                 </label>
+                 <label class="radio-item">
+                     <input type="radio" name="style-mode" id="mode-type"> 
+                     <span>Theo loại xe</span>
+                 </label>
+             </div>
+             <div style="margin-top: 10px;">
+                 <label class="radio-item">
+                    <input type="checkbox" id="toggle-cluster" checked>
+                    <span>Gom nhóm điểm (Clustering)</span>
+                 </label>
+             </div>
+          </div>
+
+          <!-- ADDED: Layer Toggle Section -->
+          <div style="padding: 10px 20px; border-bottom: 1px solid #f0f0f0;">
+             <div class="section-title-simple">Quản lý lớp bản đồ</div>
+             <div style="display: flex; flex-direction: column; gap: 8px;">
+                 <label class="radio-item">
+                     <input type="checkbox" id="toggle-stations" checked> 
+                     <span>Trạm sạc VinFast</span>
+                 </label>
+                 <label class="radio-item">
+                     <input type="checkbox" id="toggle-districts" checked> 
+                     <span>Ranh giới Hành chính (Hà Nội)</span>
+                 </label>
+             </div>
+          </div>
+          
+          <div class="sidebar-content google-style-content">
           <!-- Legend / Layer List -->
           <div class="layer-section">
                <!-- Base Map Toggle -->
@@ -63,51 +99,33 @@
                <div class="layer-list-google">
                    <!-- Layer Items -->
                    <label class="layer-item-google">
-                       <span class="icon-google" style="background-color: #e74c3c;"><i class="fas fa-bolt"></i></span>
+                       <span class="icon-google" style="background-color: #2980b9;"><i class="fas fa-car"></i></span>
                        <div class="layer-info">
-                           <span class="layer-name">Siêu nhanh 250KW - 360KW</span>
+                           <span class="layer-name">Sạc ô tô</span>
                        </div>
-                       <input type="checkbox" class="layer-checkbox" data-filter="super_fast" checked>
+                       <!-- Filters are currently only active/inactive logic, so these are just legend items for now -->
                    </label>
 
                    <label class="layer-item-google">
-                     <span class="icon-google" style="background-color: #e67e22;"><i class="fas fa-bolt"></i></span>
-                     <div class="layer-info">
-                         <span class="layer-name">Siêu nhanh 180KW</span>
-                     </div>
-                     <input type="checkbox" class="layer-checkbox" data-filter="fast_180" checked>
+                       <span class="icon-google" style="background-color: #e67e22;"><i class="fas fa-motorcycle"></i></span>
+                       <div class="layer-info">
+                           <span class="layer-name">Sạc xe máy</span>
+                       </div>
                    </label>
 
                    <label class="layer-item-google">
-                     <span class="icon-google" style="background-color: #f39c12;"><i class="fas fa-bolt"></i></span>
-                     <div class="layer-info">
-                         <span class="layer-name">Siêu nhanh 150KW</span>
-                     </div>
-                     <input type="checkbox" class="layer-checkbox" data-filter="fast_150" checked>
-                   </label>
-
-                   <label class="layer-item-google">
-                     <span class="icon-google" style="background-color: #2980b9;"><i class="fas fa-bolt"></i></span>
-                     <div class="layer-info">
-                         <span class="layer-name">Nhanh 60KW - 80KW</span>
-                     </div>
-                     <input type="checkbox" class="layer-checkbox" data-filter="fast_60" checked>
+                       <span class="icon-google" style="background-color: #16a085;"><i class="fas fa-charging-station"></i></span>
+                       <div class="layer-info">
+                           <span class="layer-name">Trạm hỗn hợp</span>
+                       </div>
                    </label>
                    
                    <label class="layer-item-google">
-                       <span class="icon-google" style="background-color: #2ecc71;"><i class="fas fa-bolt"></i></span>
+                       <span class="icon-google" style="background-color: #95a5a6;"><i class="fas fa-tools"></i></span>
                        <div class="layer-info">
-                           <span class="layer-name">Thường / Khác</span>
+                           <span class="layer-name">Bảo trì / Ngưng hoạt động</span>
                        </div>
-                       <input type="checkbox" class="layer-checkbox" data-filter="normal" checked>
-                   </label>
-                   
-                    <label class="layer-item-google">
-                       <span class="icon-google" style="background-color: #8e44ad;"><i class="fas fa-battery-full"></i></span>
-                       <div class="layer-info">
-                           <span class="layer-name">Tủ đổi pin</span>
-                       </div>
-                       <input type="checkbox" class="layer-checkbox" data-filter="battery" checked>
+                       <input type="checkbox" class="layer-checkbox" data-filter="inactive" checked>
                    </label>
                </div>
           </div>
@@ -120,6 +138,14 @@
                 <div><i class="fas fa-map-marker-alt"></i> Center: <span id="center-coords">--</span></div>
                 <div id="feature-count" style="margin-top:5px; color:#188038; font-weight:500"></div>
              </div>
+             
+             <div style="margin-bottom: 10px;">
+                <label class="layer-item-google" style="cursor: pointer;">
+                   <input type="checkbox" id="toggle-cluster"> 
+                   <span style="margin-left: 8px;">Gộp các điểm gần nhau (Cluster)</span>
+                </label>
+             </div>
+
              <button id="load-features" class="tool-btn" style="width:100%; font-size:12px"><i class="fas fa-cloud-download-alt"></i> Tải dữ liệu OSM (Current View)</button>
           </div>
         </div>
@@ -139,6 +165,20 @@
               <div style="padding: 20px; text-align: center; color: #888; font-style: italic;">Nhập từ khóa để tìm kiếm...</div>
           </div>
       </div>
+
+
+    <!-- Right Sidebar for District Info -->
+    <div id="sidebar-right" class="sidebar-right" style="display: none;">
+      <div id="sidebar-district-view" style="display: flex; height: 100%; flex-direction: column;">
+          <div class="district-header-panel" style="background: #db4437; padding: 15px; display: flex; gap: 10px; align-items: center; color: white;">
+              <button id="close-district-btn" style="background: none; border: none; color: white; cursor: pointer; font-size: 18px;"><i class="fas fa-times"></i></button>
+              <h2 style="margin: 0; font-size: 18px; font-weight: 500;">Thông tin khu vực</h2>
+          </div>
+          <div id="district-info-content" class="sidebar-content" style="flex: 1; overflow-y: auto; padding-left: 15px;">
+              <!-- District Info goes here -->
+          </div>
+      </div>
+    </div>
 
     </div>
 
@@ -160,6 +200,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
-  <script src="js/app.js?v=6"></script>
+  <script src="js/app.js?v=debug_props_v4"></script>
 </body>
 </html>
